@@ -1,0 +1,180 @@
+
+MANUAL DECODING OF BITCOIN TRANSACTION 
+
+
+Transaction HEX:
+0200000000010131811cd355c357e0e01437d9bcf690df824e9ff785012b6115dfae3d8e8b36c10100000000fdffffff0220a107000000000016001485d78eb795bd9c8a21afefc8b6fdaedf718368094c08100000000000160014840ab165c9c2555d4a31b9208ad806f89d2535e20247304402207bce86d430b58bb6b79e8c1bbecdf67a530eff3bc61581a1399e0b28a741c0ee0220303d5ce926c60bf15577f2e407f28a2ef8fe8453abd4048b716e97dbb1e3a85c01210260828bc77486a55e3bc6032ccbeda915d9494eda17b4a54dbe3b24506d40e4ff43030e00
+
+---------------------------------------------------------
+STEP-BY-STEP MANUAL DECODING
+
+
+02000000          → Version = 2
+00 01             → Marker + Flag (SegWit Transaction)
+
+
+INPUT SECTION:
+01                → Number of Inputs = 1
+
+31811cd355c357e0e01437d9bcf690df824e9ff785012b6115dfae3d8e8b36c1
+                   → Previous Transaction ID (TXID)
+01000000          → Output index (vout) = 1
+00                → ScriptSig length = 0 (because SegWit)
+fdffffff          → Sequence = 0xFFFFFFFD (RBF enabled)
+
+OUTPUT SECTION:
+02                → Number of Outputs = 2
+
+-- Output 1 --
+20a1070000000000  → Value = 0x000000000007A120 = 500,000 satoshis (0.005 BTC)
+16                → Script length = 22 bytes
+001485d78eb795bd9c8a21afefc8b6fdaedf71836809
+                   → ScriptPubKey (P2WPKH address)
+
+-- Output 2 --
+4c08100000000000  → Value = 0x000000000010084C = 1,050,316 satoshis (0.01050316 BTC)
+16                → Script length = 22 bytes
+0014840ab165c9c2555d4a31b9208ad806f89d2535e2
+                   → ScriptPubKey (P2WPKH address)
+
+WITNESS SECTION:
+02                → Number of witness items
+47304402207bce86...85c01 → Signature (71 bytes)
+210260828b...0e4ff       → Public key (33 bytes)
+
+LOCKTIME:
+43030e00          → Locktime = 0x000E0343 = 922563
+
+
+SUMMARY
+• Version: 2
+• SegWit: Yes
+• Inputs: 1
+• Outputs: 2
+• Output 1: 0.005 BTC → P2WPKH
+• Output 2: 0.01050316 BTC → P2WPKH
+• Locktime: 922563
+• Total Output Value: 0.01550316 BTC
+
+
+
+
+
+...PYTHON CODES
+import binascii
+import struct
+
+def read_varint(data, index):
+    prefix = data[index]
+    if prefix < 0xfd:
+        return prefix, index + 1
+    elif prefix == 0xfd:
+        return struct.unpack('<H', data[index+1:index+3])[0], index + 3
+    elif prefix == 0xfe:
+        return struct.unpack('<I', data[index+1:index+5])[0], index + 5
+    else:
+        return struct.unpack('<Q', data[index+1:index+9])[0], index + 9
+
+def decode_transaction(tx_hex):
+    data = bytearray(binascii.unhexlify(tx_hex))
+    index = 0
+
+    # Version (4 bytes)
+    version = struct.unpack('<I', data[index:index+4])[0]
+    index += 4
+    print(f"Version: {version}")
+
+    # Check for marker and flag (SegWit)
+    segwit = False
+    if data[index] == 0 and data[index+1] == 1:
+        segwit = True
+        index += 2
+        print("SegWit Transaction Detected ")
+
+    # Input count
+    in_count, index = read_varint(data, index)
+    print(f"Input Count: {in_count}")
+
+    # Inputs
+    inputs = []
+    for i in range(in_count):
+        txid = data[index:index+32][::-1].hex()
+        index += 32
+
+        vout = struct.unpack('<I', data[index:index+4])[0]
+        index += 4
+
+        script_len, index = read_varint(data, index)
+        script_sig = data[index:index+script_len].hex()
+        index += script_len
+
+        sequence = data[index:index+4].hex()
+        index += 4
+
+        inputs.append({
+            "txid": txid,
+            "vout": vout,
+            "scriptSig": script_sig,
+            "sequence": sequence
+        })
+
+    # Output count
+    out_count, index = read_varint(data, index)
+    print(f"Output Count: {out_count}")
+
+    # Outputs
+    outputs = []
+    for i in range(out_count):
+        value = struct.unpack('<Q', data[index:index+8])[0] / 1e8
+        index += 8
+
+        script_len, index = read_varint(data, index)
+        script_pubkey = data[index:index+script_len].hex()
+        index += script_len
+
+        outputs.append({
+            "value": value,
+            "scriptPubKey": script_pubkey
+        })
+
+    # Witness data (if SegWit)
+    if segwit:
+        for i in range(in_count):
+            n_stack_items, index = read_varint(data, index)
+            witness_stack = []
+            for _ in range(n_stack_items):
+                item_len, index = read_varint(data, index)
+                item = data[index:index+item_len].hex()
+                index += item_len
+                witness_stack.append(item)
+            inputs[i]["witness"] = witness_stack
+
+    # Locktime
+    locktime = struct.unpack('<I', data[index:index+4])[0]
+    index += 4
+
+    # --- Display ---
+    print("\n=== INPUTS ===")
+    for i, inp in enumerate(inputs):
+        print(f"\nInput {i+1}:")
+        print(f"  TXID: {inp['txid']}")
+        print(f"  Vout: {inp['vout']}")
+        print(f"  ScriptSig: {inp['scriptSig']}")
+        print(f"  Sequence: {inp['sequence']}")
+        if "witness" in inp:
+            print(f"  Witness: {inp['witness']}")
+
+    print("\n=== OUTPUTS ===")
+    for i, out in enumerate(outputs):
+        print(f"\nOutput {i+1}:")
+        print(f"  Value: {out['value']} BTC")
+        print(f"  ScriptPubKey: {out['scriptPubKey']}")
+
+    print(f"\nLocktime: {locktime}")
+    print("\n Transaction successfully decoded!\n")
+
+
+
+tx_hex = "0200000000010131811cd355c357e0e01437d9bcf690df824e9ff785012b6115dfae3d8e8b36c10100000000fdffffff0220a107000000000016001485d78eb795bd9c8a21afefc8b6fdaedf718368094c08100000000000160014840ab165c9c2555d4a31b9208ad806f89d2535e20247304402207bce86d430b58bb6b79e8c1bbecdf67a530eff3bc61581a1399e0b28a741c0ee0220303d5ce926c60bf15577f2e407f28a2ef8fe8453abd4048b716e97dbb1e3a85c01210260828bc77486a55e3bc6032ccbeda915d9494eda17b4a54dbe3b24506d40e4ff43030e00"
+
+decode_transaction(tx_hex)
